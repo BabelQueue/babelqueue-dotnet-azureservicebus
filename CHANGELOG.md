@@ -7,7 +7,7 @@ this package adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 The envelope wire format is versioned separately by `meta.schema_version`
 (currently **1**) — see the contract at [babelqueue.com](https://babelqueue.com).
 
-## [Unreleased]
+## [1.0.0] - 2026-06-13
 
 ### Added
 - Initial release. An Azure Service Bus transport on `BabelQueue.Core` +
