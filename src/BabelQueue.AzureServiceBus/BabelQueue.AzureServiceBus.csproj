@@ -1,0 +1,48 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <LangVersion>latest</LangVersion>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <GenerateDocumentationFile>true</GenerateDocumentationFile>
+    <NoWarn>$(NoWarn);CS1591</NoWarn>
+
+    <!-- Static analysis: Roslyn analyzers at the recommended ruleset, failing the
+         build on any finding. -->
+    <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
+    <EnableNETAnalyzers>true</EnableNETAnalyzers>
+    <AnalysisLevel>latest-recommended</AnalysisLevel>
+
+    <!-- NuGet package metadata -->
+    <PackageId>BabelQueue.AzureServiceBus</PackageId>
+    <Version>1.0.0</Version>
+    <Authors>Muhammet Şafak</Authors>
+    <Company>BabelQueue</Company>
+    <Description>Azure Service Bus transport for BabelQueue — a canonical-envelope publisher and a URN-routed consumer over Azure.Messaging.ServiceBus, on the framework-agnostic core.</Description>
+    <PackageProjectUrl>https://babelqueue.com</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/BabelQueue/babelqueue-dotnet-azureservicebus</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageLicenseExpression>MIT</PackageLicenseExpression>
+    <PackageReadmeFile>README.md</PackageReadmeFile>
+    <PackageTags>babelqueue;azure;servicebus;asb;queue;polyglot;messaging</PackageTags>
+    <Copyright>Copyright (c) 2026 Muhammet Şafak</Copyright>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Azure.Messaging.ServiceBus" Version="7.18.2" />
+    <PackageReference Include="BabelQueue.Core" Version="1.0.0" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Let the test project assert the internal native projection against the conformance golden. -->
+    <InternalsVisibleTo Include="BabelQueue.AzureServiceBus.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <None Include="../../README.md" Pack="true" PackagePath="\" />
+  </ItemGroup>
+
+</Project>

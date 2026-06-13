@@ -1,0 +1,408 @@
+<?xml version="1.0" encoding="utf-8"?>
+<coverage line-rate="0.9873000000000001" branch-rate="0.7894" version="1.9" timestamp="1781329428" lines-covered="78" lines-valid="79" branches-covered="30" branches-valid="38">
+  <sources>
+    <source>/Users/muhammetsafak/Documents/Projects/babelqueue/babelqueue-dotnet-azureservicebus/src/BabelQueue.AzureServiceBus/</source>
+  </sources>
+  <packages>
+    <package name="BabelQueue.AzureServiceBus" line-rate="0.9873000000000001" branch-rate="0.7894" complexity="45">
+      <classes>
+        <class name="BabelQueue.AzureServiceBus.AsbConsumer" filename="AsbConsumer.cs" line-rate="1" branch-rate="1" complexity="6">
+          <methods>
+            <method name="Reconcile" signature="(BabelQueue.Envelope,System.Int32)" line-rate="1" branch-rate="1" complexity="2">
+              <lines>
+                <line number="109" hits="6" branch="False" />
+                <line number="110" hits="6" branch="True" condition-coverage="100% (2/2)">
+                  <conditions>
+                    <condition number="11" type="jump" coverage="100%" />
+                  </conditions>
+                </line>
+              </lines>
+            </method>
+            <method name="CompleteAsync" signature="(Azure.Messaging.ServiceBus.ServiceBusReceivedMessage,System.Threading.CancellationToken)" line-rate="1" branch-rate="1" complexity="1">
+              <lines>
+                <line number="114" hits="3" branch="False" />
+              </lines>
+            </method>
+            <method name="AbandonAsync" signature="(Azure.Messaging.ServiceBus.ServiceBusReceivedMessage,System.Threading.CancellationToken)" line-rate="1" branch-rate="1" complexity="1">
+              <lines>
+                <line number="117" hits="3" branch="False" />
+              </lines>
+            </method>
+            <method name=".ctor" signature="(Azure.Messaging.ServiceBus.ServiceBusReceiver,System.Collections.Generic.IReadOnlyDictionary`2&lt;System.String,BabelQueue.AzureServiceBus.BabelHandler&gt;,BabelQueue.AzureServiceBus.AsbConsumerOptions)" line-rate="1" branch-rate="1" complexity="2">
+              <lines>
+                <line number="19" hits="7" branch="False" />
+                <line number="20" hits="7" branch="False" />
+                <line number="21" hits="7" branch="False" />
+                <line number="22" hits="7" branch="False" />
+                <line number="24" hits="7" branch="False" />
+                <line number="25" hits="7" branch="False" />
+                <line number="26" hits="7" branch="False" />
+                <line number="27" hits="7" branch="False" />
+                <line number="28" hits="7" branch="True" condition-coverage="100% (2/2)">
+                  <conditions>
+                    <condition number="45" type="jump" coverage="100%" />
+                  </conditions>
+                </line>
+                <line number="29" hits="7" branch="False" />
+              </lines>
+            </method>
+          </methods>
+          <lines>
+            <line number="109" hits="6" branch="False" />
+            <line number="110" hits="6" branch="True" condition-coverage="100% (2/2)">
+              <conditions>
+                <condition number="11" type="jump" coverage="100%" />
+              </conditions>
+            </line>
+            <line number="114" hits="3" branch="False" />
+            <line number="117" hits="3" branch="False" />
+            <line number="19" hits="7" branch="False" />
+            <line number="20" hits="7" branch="False" />
+            <line number="21" hits="7" branch="False" />
+            <line number="22" hits="7" branch="False" />
+            <line number="24" hits="7" branch="False" />
+            <line number="25" hits="7" branch="False" />
+            <line number="26" hits="7" branch="False" />
+            <line number="27" hits="7" branch="False" />
+            <line number="28" hits="7" branch="True" condition-coverage="100% (2/2)">
+              <conditions>
+                <condition number="45" type="jump" coverage="100%" />
+              </conditions>
+            </line>
+            <line number="29" hits="7" branch="False" />
+          </lines>
+        </class>
+        <class name="BabelQueue.AzureServiceBus.AsbConsumer/&lt;HandleAsync&gt;d__6" filename="AsbConsumer.cs" line-rate="1" branch-rate="0.6875" complexity="16">
+          <methods>
+            <method name="MoveNext" signature="()" line-rate="1" branch-rate="0.6875" complexity="16">
+              <lines>
+                <line number="57" hits="6" branch="True" condition-coverage="50% (2/4)">
+                  <conditions>
+                    <condition number="61" type="jump" coverage="50%" />
+                    <condition number="73" type="jump" coverage="50%" />
+                  </conditions>
+                </line>
+                <line number="58" hits="6" branch="False" />
+                <line number="59" hits="6" branch="False" />
+                <line number="61" hits="6" branch="True" condition-coverage="100% (2/2)">
+                  <conditions>
+                    <condition number="118" type="jump" coverage="100%" />
+                  </conditions>
+                </line>
+                <line number="63" hits="1" branch="True" condition-coverage="50% (1/2)">
+                  <conditions>
+                    <condition number="135" type="jump" coverage="50%" />
+                  </conditions>
+                </line>
+                <line number="64" hits="1" branch="False" />
+                <line number="65" hits="1" branch="False" />
+                <line number="66" hits="1" branch="False" />
+                <line number="67" hits="1" branch="False" />
+                <line number="70" hits="5" branch="False" />
+                <line number="71" hits="5" branch="True" condition-coverage="100% (2/2)">
+                  <conditions>
+                    <condition number="314" type="jump" coverage="100%" />
+                  </conditions>
+                </line>
+                <line number="73" hits="2" branch="True" condition-coverage="100% (2/2)">
+                  <conditions>
+                    <condition number="330" type="jump" coverage="100%" />
+                  </conditions>
+                </line>
+                <line number="75" hits="1" branch="False" />
+                <line number="76" hits="1" branch="False" />
+                <line number="80" hits="1" branch="True" condition-coverage="50% (1/2)">
+                  <conditions>
+                    <condition number="600" type="jump" coverage="50%" />
+                  </conditions>
+                </line>
+                <line number="81" hits="1" branch="False" />
+                <line number="84" hits="2" branch="False" />
+                <line number="89" hits="3" branch="False" />
+                <line number="90" hits="2" branch="False" />
+                <line number="91" hits="2" branch="False" />
+                <line number="93" hits="1" branch="False" />
+                <line number="97" hits="1" branch="True" condition-coverage="50% (1/2)">
+                  <conditions>
+                    <condition number="1068" type="jump" coverage="50%" />
+                  </conditions>
+                </line>
+                <line number="98" hits="1" branch="False" />
+                <line number="100" hits="6" branch="False" />
+              </lines>
+            </method>
+          </methods>
+          <lines>
+            <line number="57" hits="6" branch="True" condition-coverage="50% (2/4)">
+              <conditions>
+                <condition number="61" type="jump" coverage="50%" />
+                <condition number="73" type="jump" coverage="50%" />
+              </conditions>
+            </line>
+            <line number="58" hits="6" branch="False" />
+            <line number="59" hits="6" branch="False" />
+            <line number="61" hits="6" branch="True" condition-coverage="100% (2/2)">
+              <conditions>
+                <condition number="118" type="jump" coverage="100%" />
+              </conditions>
+            </line>
+            <line number="63" hits="1" branch="True" condition-coverage="50% (1/2)">
+              <conditions>
+                <condition number="135" type="jump" coverage="50%" />
+              </conditions>
+            </line>
+            <line number="64" hits="1" branch="False" />
+            <line number="65" hits="1" branch="False" />
+            <line number="66" hits="1" branch="False" />
+            <line number="67" hits="1" branch="False" />
+            <line number="70" hits="5" branch="False" />
+            <line number="71" hits="5" branch="True" condition-coverage="100% (2/2)">
+              <conditions>
+                <condition number="314" type="jump" coverage="100%" />
+              </conditions>
+            </line>
+            <line number="73" hits="2" branch="True" condition-coverage="100% (2/2)">
+              <conditions>
+                <condition number="330" type="jump" coverage="100%" />
+              </conditions>
+            </line>
+            <line number="75" hits="1" branch="False" />
+            <line number="76" hits="1" branch="False" />
+            <line number="80" hits="1" branch="True" condition-coverage="50% (1/2)">
+              <conditions>
+                <condition number="600" type="jump" coverage="50%" />
+              </conditions>
+            </line>
+            <line number="81" hits="1" branch="False" />
+            <line number="84" hits="2" branch="False" />
+            <line number="89" hits="3" branch="False" />
+            <line number="90" hits="2" branch="False" />
+            <line number="91" hits="2" branch="False" />
+            <line number="93" hits="1" branch="False" />
+            <line number="97" hits="1" branch="True" condition-coverage="50% (1/2)">
+              <conditions>
+                <condition number="1068" type="jump" coverage="50%" />
+              </conditions>
+            </line>
+            <line number="98" hits="1" branch="False" />
+            <line number="100" hits="6" branch="False" />
+          </lines>
+        </class>
+        <class name="BabelQueue.AzureServiceBus.AsbConsumer/&lt;PollAsync&gt;d__4" filename="AsbConsumer.cs" line-rate="1" branch-rate="1" complexity="2">
+          <methods>
+            <method name="MoveNext" signature="()" line-rate="1" branch-rate="1" complexity="2">
+              <lines>
+                <line number="34" hits="6" branch="False" />
+                <line number="35" hits="6" branch="False" />
+                <line number="36" hits="6" branch="False" />
+                <line number="38" hits="24" branch="True" condition-coverage="100% (2/2)">
+                  <conditions>
+                    <condition number="329" type="jump" coverage="100%" />
+                  </conditions>
+                </line>
+                <line number="40" hits="6" branch="False" />
+                <line number="43" hits="6" branch="False" />
+                <line number="44" hits="6" branch="False" />
+              </lines>
+            </method>
+          </methods>
+          <lines>
+            <line number="34" hits="6" branch="False" />
+            <line number="35" hits="6" branch="False" />
+            <line number="36" hits="6" branch="False" />
+            <line number="38" hits="24" branch="True" condition-coverage="100% (2/2)">
+              <conditions>
+                <condition number="329" type="jump" coverage="100%" />
+              </conditions>
+            </line>
+            <line number="40" hits="6" branch="False" />
+            <line number="43" hits="6" branch="False" />
+            <line number="44" hits="6" branch="False" />
+          </lines>
+        </class>
+        <class name="BabelQueue.AzureServiceBus.AsbConsumer/&lt;RunAsync&gt;d__5" filename="AsbConsumer.cs" line-rate="0.6666" branch-rate="0.5" complexity="2">
+          <methods>
+            <method name="MoveNext" signature="()" line-rate="0.6666" branch-rate="0.5" complexity="2">
+              <lines>
+                <line number="49" hits="1" branch="True" condition-coverage="50% (1/2)">
+                  <conditions>
+                    <condition number="134" type="jump" coverage="50%" />
+                  </conditions>
+                </line>
+                <line number="51" hits="0" branch="False" />
+                <line number="53" hits="1" branch="False" />
+              </lines>
+            </method>
+          </methods>
+          <lines>
+            <line number="49" hits="1" branch="True" condition-coverage="50% (1/2)">
+              <conditions>
+                <condition number="134" type="jump" coverage="50%" />
+              </conditions>
+            </line>
+            <line number="51" hits="0" branch="False" />
+            <line number="53" hits="1" branch="False" />
+          </lines>
+        </class>
+        <class name="BabelQueue.AzureServiceBus.AsbConsumerOptions" filename="AsbConsumerOptions.cs" line-rate="1" branch-rate="1" complexity="4">
+          <methods>
+            <method name="get_MaxMessages" signature="()" line-rate="1" branch-rate="1" complexity="1">
+              <lines>
+                <line number="9" hits="13" branch="False" />
+              </lines>
+            </method>
+            <method name="get_MaxWaitTime" signature="()" line-rate="1" branch-rate="1" complexity="1">
+              <lines>
+                <line number="12" hits="6" branch="False" />
+              </lines>
+            </method>
+            <method name="get_OnError" signature="()" line-rate="1" branch-rate="1" complexity="1">
+              <lines>
+                <line number="18" hits="6" branch="False" />
+              </lines>
+            </method>
+            <method name="get_OnUnknownUrn" signature="()" line-rate="1" branch-rate="1" complexity="1">
+              <lines>
+                <line number="21" hits="4" branch="False" />
+              </lines>
+            </method>
+          </methods>
+          <lines>
+            <line number="9" hits="13" branch="False" />
+            <line number="12" hits="6" branch="False" />
+            <line number="18" hits="6" branch="False" />
+            <line number="21" hits="4" branch="False" />
+          </lines>
+        </class>
+        <class name="BabelQueue.AzureServiceBus.AsbProperties" filename="AsbProperties.cs" line-rate="1" branch-rate="1" complexity="10">
+          <methods>
+            <method name="ToMessage" signature="(BabelQueue.Envelope,System.Nullable`1&lt;System.TimeSpan&gt;)" line-rate="1" branch-rate="1" complexity="10">
+              <lines>
+                <line number="15" hits="6" branch="False" />
+                <line number="16" hits="6" branch="False" />
+                <line number="17" hits="6" branch="False" />
+                <line number="18" hits="6" branch="False" />
+                <line number="19" hits="6" branch="False" />
+                <line number="20" hits="6" branch="False" />
+                <line number="22" hits="6" branch="False" />
+                <line number="23" hits="6" branch="True" condition-coverage="100% (2/2)">
+                  <conditions>
+                    <condition number="60" type="jump" coverage="100%" />
+                  </conditions>
+                </line>
+                <line number="25" hits="6" branch="True" condition-coverage="100% (2/2)">
+                  <conditions>
+                    <condition number="73" type="jump" coverage="100%" />
+                  </conditions>
+                </line>
+                <line number="27" hits="6" branch="False" />
+                <line number="30" hits="6" branch="False" />
+                <line number="31" hits="6" branch="True" condition-coverage="100% (2/2)">
+                  <conditions>
+                    <condition number="125" type="jump" coverage="100%" />
+                  </conditions>
+                </line>
+                <line number="33" hits="6" branch="False" />
+                <line number="36" hits="6" branch="False" />
+                <line number="39" hits="6" branch="True" condition-coverage="100% (4/4)">
+                  <conditions>
+                    <condition number="183" type="jump" coverage="100%" />
+                    <condition number="204" type="jump" coverage="100%" />
+                  </conditions>
+                </line>
+                <line number="41" hits="2" branch="False" />
+                <line number="42" hits="2" branch="False" />
+                <line number="45" hits="6" branch="False" />
+              </lines>
+            </method>
+          </methods>
+          <lines>
+            <line number="15" hits="6" branch="False" />
+            <line number="16" hits="6" branch="False" />
+            <line number="17" hits="6" branch="False" />
+            <line number="18" hits="6" branch="False" />
+            <line number="19" hits="6" branch="False" />
+            <line number="20" hits="6" branch="False" />
+            <line number="22" hits="6" branch="False" />
+            <line number="23" hits="6" branch="True" condition-coverage="100% (2/2)">
+              <conditions>
+                <condition number="60" type="jump" coverage="100%" />
+              </conditions>
+            </line>
+            <line number="25" hits="6" branch="True" condition-coverage="100% (2/2)">
+              <conditions>
+                <condition number="73" type="jump" coverage="100%" />
+              </conditions>
+            </line>
+            <line number="27" hits="6" branch="False" />
+            <line number="30" hits="6" branch="False" />
+            <line number="31" hits="6" branch="True" condition-coverage="100% (2/2)">
+              <conditions>
+                <condition number="125" type="jump" coverage="100%" />
+              </conditions>
+            </line>
+            <line number="33" hits="6" branch="False" />
+            <line number="36" hits="6" branch="False" />
+            <line number="39" hits="6" branch="True" condition-coverage="100% (4/4)">
+              <conditions>
+                <condition number="183" type="jump" coverage="100%" />
+                <condition number="204" type="jump" coverage="100%" />
+              </conditions>
+            </line>
+            <line number="41" hits="2" branch="False" />
+            <line number="42" hits="2" branch="False" />
+            <line number="45" hits="6" branch="False" />
+          </lines>
+        </class>
+        <class name="BabelQueue.AzureServiceBus.AsbPublisher" filename="AsbPublisher.cs" line-rate="1" branch-rate="1" complexity="1">
+          <methods>
+            <method name=".ctor" signature="(Azure.Messaging.ServiceBus.ServiceBusSender)" line-rate="1" branch-rate="1" complexity="1">
+              <lines>
+                <line number="17" hits="2" branch="False" />
+                <line number="19" hits="2" branch="False" />
+                <line number="20" hits="2" branch="False" />
+                <line number="21" hits="2" branch="False" />
+              </lines>
+            </method>
+          </methods>
+          <lines>
+            <line number="17" hits="2" branch="False" />
+            <line number="19" hits="2" branch="False" />
+            <line number="20" hits="2" branch="False" />
+            <line number="21" hits="2" branch="False" />
+          </lines>
+        </class>
+        <class name="BabelQueue.AzureServiceBus.AsbPublisher/&lt;PublishAsync&gt;d__2" filename="AsbPublisher.cs" line-rate="1" branch-rate="0.5" complexity="4">
+          <methods>
+            <method name="MoveNext" signature="()" line-rate="1" branch-rate="0.5" complexity="4">
+              <lines>
+                <line number="35" hits="2" branch="False" />
+                <line number="36" hits="2" branch="False" />
+                <line number="37" hits="2" branch="False" />
+                <line number="38" hits="2" branch="True" condition-coverage="50% (2/4)">
+                  <conditions>
+                    <condition number="206" type="jump" coverage="50%" />
+                    <condition number="218" type="jump" coverage="50%" />
+                  </conditions>
+                </line>
+                <line number="39" hits="2" branch="False" />
+              </lines>
+            </method>
+          </methods>
+          <lines>
+            <line number="35" hits="2" branch="False" />
+            <line number="36" hits="2" branch="False" />
+            <line number="37" hits="2" branch="False" />
+            <line number="38" hits="2" branch="True" condition-coverage="50% (2/4)">
+              <conditions>
+                <condition number="206" type="jump" coverage="50%" />
+                <condition number="218" type="jump" coverage="50%" />
+              </conditions>
+            </line>
+            <line number="39" hits="2" branch="False" />
+          </lines>
+        </class>
+      </classes>
+    </package>
+  </packages>
+</coverage>
