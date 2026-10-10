@@ -17,6 +17,9 @@ public sealed class AsbConformanceTests
 {
     private static readonly string Dir = Path.Combine(AppContext.BaseDirectory, "conformance");
 
+    // Marker for a present-but-null application property (distinct from an absent one).
+    private static readonly object NullProperty = new();
+
     private static JsonElement Asb()
     {
         using var doc = JsonDocument.Parse(File.ReadAllText(Path.Combine(Dir, "manifest.json")));
@@ -102,6 +105,12 @@ public sealed class AsbConformanceTests
             var expect = testCase.GetProperty("expect").GetString();
             var absent = testCase.TryGetProperty("absent", out var a) && a.GetBoolean();
 
+            if (testCase.TryGetProperty("value_type", out var declaredType) && declaredType.GetString() != "float")
+            {
+                throw new InvalidOperationException(
+                    $"Unknown value_type '{declaredType.GetString()}' (this reader only understands 'float').");
+            }
+
             // JSON numbers carry no width: integral values run at both int32 and int64 width.
             var values = new List<(string Label, object? Value)>();
             if (absent)
@@ -115,6 +124,16 @@ public sealed class AsbConformanceTests
                 {
                     case JsonValueKind.String:
                         values.Add(($"'{value.GetString()}'", value.GetString()));
+                        break;
+                    case JsonValueKind.Null:
+                        // A present-but-null property: must behave exactly like an absent one.
+                        values.Add(("<null>", NullProperty));
+                        break;
+                    case JsonValueKind.Number when testCase.TryGetProperty("value_type", out var valueType)
+                                                   && valueType.GetString() == "float":
+                        // An explicit floating-point case (e.g. 1.0): hand over real floats, never integers.
+                        values.Add(($"double {value.GetDouble().ToString(CultureInfo.InvariantCulture)}", value.GetDouble()));
+                        values.Add(($"float {value.GetSingle().ToString(CultureInfo.InvariantCulture)}", value.GetSingle()));
                         break;
                     case JsonValueKind.Number when value.TryGetInt64(out var integral):
                         values.Add(($"int32 {integral}", (int)integral));
@@ -131,7 +150,11 @@ public sealed class AsbConformanceTests
             foreach (var (label, value) in values)
             {
                 var properties = new Dictionary<string, object>();
-                if (value is not null)
+                if (ReferenceEquals(value, NullProperty))
+                {
+                    properties[property] = null!;
+                }
+                else if (value is not null)
                 {
                     properties[property] = value;
                 }
