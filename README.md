@@ -46,6 +46,8 @@ var consumer = new AsbConsumer(receiver, handlers, new AsbConsumerOptions
 await consumer.RunAsync(cancellationToken);
 ```
 
+**Schema-version gate.** Before decoding, the consumer reads the `bq-schema-version` application property. Absent or blank decodes as usual; integer `1` (any integral type) and string `"1"` are accepted; any other value is **dead-lettered explicitly** (reason "unsupported schema version") without decoding the body and without Abandon. The rejected value is echoed in the description and `OnError` message as at most its first 64 characters (`...` appended when cut), since Service Bus caps the description at 4096 characters.
+
 Delayed delivery: `PublishAsync(urn, data, delay: TimeSpan.FromMinutes(5))` → native
 `ScheduledEnqueueTime`. Auth: a connection string, or the fully-qualified namespace + a
 `TokenCredential` (`DefaultAzureCredential`).

@@ -86,4 +86,83 @@ public sealed class AsbConformanceTests
             Assert.Equal(expected, seen);
         }
     }
+
+    [Fact]
+    public async Task SchemaVersionGateMatchesGolden()
+    {
+        var gate = Asb().GetProperty("schema_version_gate");
+        var property = gate.GetProperty("property").GetString()!;
+        var body = File.ReadAllText(Path.Combine(Dir, gate.GetProperty("fixture").GetString()!));
+        var job = EnvelopeCodec.Decode(body).Job!;
+
+        var cases = gate.GetProperty("cases").EnumerateArray().ToList();
+        Assert.NotEmpty(cases);
+        foreach (var testCase in cases)
+        {
+            var expect = testCase.GetProperty("expect").GetString();
+            var absent = testCase.TryGetProperty("absent", out var a) && a.GetBoolean();
+
+            // JSON numbers carry no width: integral values run at both int32 and int64 width.
+            var values = new List<(string Label, object? Value)>();
+            if (absent)
+            {
+                values.Add(("<absent>", null));
+            }
+            else
+            {
+                var value = testCase.GetProperty("value");
+                switch (value.ValueKind)
+                {
+                    case JsonValueKind.String:
+                        values.Add(($"'{value.GetString()}'", value.GetString()));
+                        break;
+                    case JsonValueKind.Number when value.TryGetInt64(out var integral):
+                        values.Add(($"int32 {integral}", (int)integral));
+                        values.Add(($"int64 {integral}", integral));
+                        break;
+                    case JsonValueKind.Number:
+                        values.Add(($"double {value.GetDouble().ToString(CultureInfo.InvariantCulture)}", value.GetDouble()));
+                        break;
+                    default:
+                        throw new InvalidOperationException($"Unexpected gate value kind {value.ValueKind}.");
+                }
+            }
+
+            foreach (var (label, value) in values)
+            {
+                var properties = new Dictionary<string, object>();
+                if (value is not null)
+                {
+                    properties[property] = value;
+                }
+
+                var message = ServiceBusModelFactory.ServiceBusReceivedMessage(
+                    body: BinaryData.FromString(body),
+                    deliveryCount: 1,
+                    properties: properties);
+
+                var mock = new Mock<ServiceBusReceiver>();
+                mock.Setup(r => r.ReceiveMessagesAsync(It.IsAny<int>(), It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()))
+                    .ReturnsAsync((IReadOnlyList<ServiceBusReceivedMessage>)new[] { message });
+                mock.Setup(r => r.CompleteMessageAsync(It.IsAny<ServiceBusReceivedMessage>(), It.IsAny<CancellationToken>()))
+                    .Returns(Task.CompletedTask);
+                mock.Setup(r => r.DeadLetterMessageAsync(It.IsAny<ServiceBusReceivedMessage>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+                    .Returns(Task.CompletedTask);
+
+                var seen = 0;
+                var handlers = new Dictionary<string, BabelHandler>
+                {
+                    [job] = (_, _, _) => { seen++; return Task.CompletedTask; },
+                };
+                await new AsbConsumer(mock.Object, handlers).PollAsync();
+
+                Assert.True(
+                    (expect == "decode" ? 1 : 0) == seen,
+                    $"{label}: expected {expect} but handler ran {seen} time(s)");
+                mock.Verify(
+                    r => r.DeadLetterMessageAsync(It.IsAny<ServiceBusReceivedMessage>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+                    expect == "decode" ? Times.Never() : Times.Once());
+            }
+        }
+    }
 }

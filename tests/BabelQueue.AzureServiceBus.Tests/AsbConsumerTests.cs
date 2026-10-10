@@ -135,6 +135,165 @@ public sealed class AsbConsumerTests
             Times.Once);
     }
 
+    private static ServiceBusReceivedMessage WithSchemaVersion(string body, object? version)
+    {
+        var properties = new Dictionary<string, object>();
+        if (version is not null)
+        {
+            properties["bq-schema-version"] = version;
+        }
+
+        return ServiceBusModelFactory.ServiceBusReceivedMessage(
+            body: BinaryData.FromString(body),
+            subject: Urn,
+            deliveryCount: 1,
+            properties: properties);
+    }
+
+    private static string ValidBody()
+        => EnvelopeCodec.Encode(
+            EnvelopeCodec.Make(Urn, new Dictionary<string, object?> { ["order_id"] = 1 }, "orders", null));
+
+    private static Mock<ServiceBusReceiver> WithDeadLetter(Mock<ServiceBusReceiver> receiver)
+    {
+        receiver
+            .Setup(r => r.DeadLetterMessageAsync(
+                It.IsAny<ServiceBusReceivedMessage>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        return receiver;
+    }
+
+    [Theory]
+    [InlineData(null)]
+    [InlineData("")]
+    [InlineData(" \t")]
+    [InlineData("1")]
+    [InlineData(1)]
+    [InlineData(1L)]
+    [InlineData((short)1)]
+    [InlineData((byte)1)]
+    [InlineData(1u)]
+    [InlineData(1UL)]
+    public async Task SchemaVersionGateLetsAbsentBlankOrSupportedVersionThrough(object? version)
+    {
+        var receiver = WithDeadLetter(ReceiverWith(WithSchemaVersion(ValidBody(), version)));
+        var calls = 0;
+        var handlers = new Dictionary<string, BabelHandler>
+        {
+            [Urn] = (_, _, _) => { calls++; return Task.CompletedTask; },
+        };
+
+        await new AsbConsumer(receiver.Object, handlers).PollAsync();
+
+        Assert.Equal(1, calls);
+        receiver.Verify(
+            r => r.CompleteMessageAsync(It.IsAny<ServiceBusReceivedMessage>(), It.IsAny<CancellationToken>()),
+            Times.Once);
+        receiver.Verify(
+            r => r.DeadLetterMessageAsync(It.IsAny<ServiceBusReceivedMessage>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Theory]
+    [InlineData("2")]
+    [InlineData("x")]
+    [InlineData(" 1")]
+    [InlineData(2)]
+    [InlineData(2L)]
+    [InlineData(0)]
+    [InlineData(1.5)]
+    [InlineData(true)]
+    public async Task UnsupportedSchemaVersionIsDeadLetteredWithoutDecoding(object version)
+    {
+        // The body is not valid JSON: if the gate decoded it first, Decode would throw instead of
+        // the message being dead-lettered — so a clean dead-letter proves the body was never decoded.
+        var receiver = WithDeadLetter(ReceiverWith(WithSchemaVersion("{ this is not json", version)));
+        Exception? reported = null;
+        Envelope? reportedEnvelope = null;
+        var calls = 0;
+        var options = new AsbConsumerOptions { OnError = (e, env, _) => { reported = e; reportedEnvelope = env; } };
+        var handlers = new Dictionary<string, BabelHandler>
+        {
+            [Urn] = (_, _, _) => { calls++; return Task.CompletedTask; },
+        };
+
+        var count = await new AsbConsumer(receiver.Object, handlers, options).PollAsync();
+
+        Assert.Equal(1, count);
+        Assert.Equal(0, calls);
+        Assert.IsType<BabelQueueException>(reported);
+        Assert.Null(reportedEnvelope!.Job);
+        receiver.Verify(
+            r => r.DeadLetterMessageAsync(
+                It.IsAny<ServiceBusReceivedMessage>(),
+                "unsupported schema version",
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()),
+            Times.Once);
+        receiver.Verify(
+            r => r.AbandonMessageAsync(It.IsAny<ServiceBusReceivedMessage>(), It.IsAny<IDictionary<string, object>>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+        receiver.Verify(
+            r => r.CompleteMessageAsync(It.IsAny<ServiceBusReceivedMessage>(), It.IsAny<CancellationToken>()),
+            Times.Never);
+    }
+
+    [Fact]
+    public async Task OversizedSchemaVersionIsTruncatedSoDeadLetterDoesNotThrow()
+    {
+        // Service Bus rejects a dead-letter reason/description over 4096 characters, so the echoed value
+        // is cut to its first 64 characters plus "...".
+        var huge = new string('x', 5000);
+        var receiver = ReceiverWith(WithSchemaVersion("{ this is not json", huge));
+        string? description = null;
+        receiver
+            .Setup(r => r.DeadLetterMessageAsync(
+                It.IsAny<ServiceBusReceivedMessage>(),
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<CancellationToken>()))
+            .Returns<ServiceBusReceivedMessage, string, string, CancellationToken>((_, reason, desc, _) =>
+            {
+                // Mirror the SDK's own guard (AssertNotTooLong, 4096).
+                if (reason.Length > 4096 || desc.Length > 4096)
+                {
+                    throw new ArgumentOutOfRangeException(nameof(desc));
+                }
+
+                description = desc;
+                return Task.CompletedTask;
+            });
+        Exception? reported = null;
+        var options = new AsbConsumerOptions { OnError = (e, _, _) => reported = e };
+
+        var count = await new AsbConsumer(receiver.Object, new Dictionary<string, BabelHandler>(), options).PollAsync();
+
+        Assert.Equal(1, count);
+        var expected = new string('x', 64) + "...";
+        Assert.NotNull(description);
+        Assert.Contains($"'{expected}'", description);
+        Assert.DoesNotContain(new string('x', 65), description);
+        Assert.DoesNotContain(new string('x', 65), reported!.Message);
+        Assert.True(description.Length < 300);
+    }
+
+    [Fact]
+    public async Task SchemaVersionOfExactlyTheLimitIsNotTruncated()
+    {
+        var value = new string('x', 64);
+        var receiver = WithDeadLetter(ReceiverWith(WithSchemaVersion("{ this is not json", value)));
+        Exception? reported = null;
+        var options = new AsbConsumerOptions { OnError = (e, _, _) => reported = e };
+
+        await new AsbConsumer(receiver.Object, new Dictionary<string, BabelHandler>(), options).PollAsync();
+
+        Assert.Contains($"'{value}'", reported!.Message);
+        Assert.DoesNotContain("...", reported.Message);
+    }
+
     [Fact]
     public async Task RunAsyncStopsWhenAlreadyCancelled()
     {
