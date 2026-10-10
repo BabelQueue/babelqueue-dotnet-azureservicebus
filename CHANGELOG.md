@@ -9,6 +9,8 @@ The envelope wire format is versioned separately by `meta.schema_version`
 
 ## [Unreleased]
 
+## [1.0.1] - 2026-10-10
+
 ### Fixed
 - `AsbConsumer` now checks the `bq-schema-version` application property **before** decoding the body (§4.7). An unsupported value is dead-lettered explicitly (`DeadLetterMessageAsync`, reason "unsupported schema version") without decoding and without abandoning. The string `"1"` and any integral AMQP type with value `1` are accepted (producers write integer `1`); absent or blank (empty / ASCII whitespace) falls through to the normal decode. The rejected value is echoed truncated to 64 characters (`...` appended) so an oversized value cannot make `DeadLetterMessageAsync` throw. No public API change.
 

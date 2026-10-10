@@ -16,7 +16,7 @@
 
     <!-- NuGet package metadata -->
     <PackageId>BabelQueue.AzureServiceBus</PackageId>
-    <Version>1.0.0</Version>
+    <Version>1.0.1</Version>
     <Authors>Muhammet Şafak</Authors>
     <Company>BabelQueue</Company>
     <Description>Azure Service Bus transport for BabelQueue — a canonical-envelope publisher and a URN-routed consumer over Azure.Messaging.ServiceBus, on the framework-agnostic core.</Description>
