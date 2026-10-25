@@ -46,7 +46,14 @@ var consumer = new AsbConsumer(receiver, handlers, new AsbConsumerOptions
 await consumer.RunAsync(cancellationToken);
 ```
 
-**Schema-version gate.** Before decoding, the consumer reads the `bq-schema-version` application property. Absent or blank decodes as usual; integer `1` (any integral type) and string `"1"` are accepted; any other value is **dead-lettered explicitly** (reason "unsupported schema version") without decoding the body and without Abandon. The rejected value is echoed in the description and `OnError` message as at most its first 64 characters (`...` appended when cut), since Service Bus caps the description at 4096 characters.
+**Schema-version gate (ADR-0037).** Before decoding, the consumer reads the `bq-schema-version` application property. Absent or blank decodes as usual; integer `1` (any integral type) and string `"1"` are accepted; any other value is rejected without decoding the body and settled on its **first delivery**, never retried and never handed to a handler or `OnUnknownUrn`. With no `DeadLetterSender` it is **dead-lettered explicitly** to the native sub-queue (reason "unsupported schema version"), without Abandon. With a `DeadLetterSender` (a sender on `<queue>.dlq`) its body is written **exactly as received** (no `dead_letter` block) to `<queue>.dlq` and then `Complete`d; a failed write `Abandon`s it (reported). The rejected value is echoed in the description and `OnError` message as at most its first 64 characters (`...` appended when cut), since Service Bus caps the description at 4096 characters. This consumer has only an `OnUnknownUrn` callback and no strategy option: it behaves as `fail`, and the callback never applies to a gated message.
+
+**Poison (ADR-0037).** A body that can never reach a handler — invalid UTF-8, not a JSON object, an object without a valid `job`/`urn`, or any other non-conformant envelope — is never handed to one. With a `DeadLetterSender` it is written to `<queue>.dlq` as the ADR-0035 record (`reason: "poison"`; a strict JSON object is spliced byte for byte, anything else is wrapped as `raw`, base64 for invalid UTF-8) and `Complete`d only after the write; a failed write `Abandon`s it. `dead_letter.original_queue` is `AsbConsumerOptions.Queue`, else the receiver entity path. With no `DeadLetterSender` it is `Abandon`ed, so the broker moves it to the native dead-letter sub-queue at `MaxDeliveryCount` (today's behaviour). **Behaviour change:** with a `DeadLetterSender`, a poison body is dead-lettered at its first delivery instead of being abandoned until `MaxDeliveryCount`.
+
+```csharp
+await using var dlq = client.CreateSender("orders.dlq");   // an ordinary queue (§4.5)
+var consumer = new AsbConsumer(receiver, handlers, new AsbConsumerOptions { DeadLetterSender = dlq });
+```
 
 Delayed delivery: `PublishAsync(urn, data, delay: TimeSpan.FromMinutes(5))` → native
 `ScheduledEnqueueTime`. Auth: a connection string, or the fully-qualified namespace + a
@@ -80,7 +87,7 @@ dotnet test
 ```
 
 `ServiceBusSender` / `ServiceBusReceiver` are mockable, so the unit tests use Moq +
-`ServiceBusModelFactory` — no Azure, no network.
+`ServiceBusModelFactory` — no Azure, no network. The vendored conformance suite (v1.8.0: `poison_dlq`, `version_gate_asb`) is run too.
 
 ## License
 

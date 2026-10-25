@@ -9,9 +9,33 @@ The envelope wire format is versioned separately by `meta.schema_version`
 
 ## [Unreleased]
 
+Implements ADR-0037 decisions 1 and 2. The envelope stays at `schema_version: 1`; every change is a consumer-side settle
+decision. Ships as a **MINOR**.
+
+### Added
+
+- `AsbConsumerOptions.DeadLetterSender` (a `ServiceBusSender` on `<queue>.dlq`, opt-in): turns BabelQueue dead-lettering on.
+  With it set, a poison body is written as the ADR-0035 record (`reason: "poison"`) and a `bq-schema-version`-gated message
+  as the raw incoming body (no `dead_letter` block), each on its first delivery, and `Complete`d after the write; a failed
+  write `Abandon`s the message and is reported.
+- `AsbConsumerOptions.Queue`: the consumer's queue name for `dead_letter.original_queue` of a poison record (default: the
+  receiver entity path, else the sender path without `.dlq`).
+
 ### Changed
 
-- Vendored conformance suite updated to v1.6.0 (tests only; no source or wire change, `schema_version` stays 1).
+- **Behaviour change (with `DeadLetterSender` set): a poison body is dead-lettered at its first delivery.** Before, it was
+  abandoned until `MaxDeliveryCount` moved it to the native sub-queue. It is written via `BabelQueue.Core`'s `PoisonRecord`
+  (a strict JSON object is spliced byte for byte, anything else is wrapped as `raw`, base64 for invalid UTF-8) and is
+  never handed to a handler. Invalid UTF-8 is now poison (before, it was decoded leniently).
+- **Behaviour change (with `DeadLetterSender` set): a gated message goes to `<queue>.dlq` raw.** Before, it was dead-lettered
+  to the native `$DeadLetterQueue`. With no `DeadLetterSender` it is still dead-lettered explicitly to the native sub-queue
+  (reason "unsupported schema version"), and a poison body is still abandoned (unchanged).
+- The `OnUnknownUrn` callback applies to an unknown URN only; this consumer has no strategy option and behaves as `fail` for a
+  poison or gated message (ADR-0037 "Configured strategy only").
+- `BabelQueue.Core` dependency raised from `1.0.0` to `1.13.0` (`PoisonRecord`).
+- Vendored conformance suite updated to v1.8.0; CI pins v1.8.0. The runners cover the `poison_dlq` and `version_gate_asb`
+  sections (rows with an `on_unknown_urn` value other than `fail` are not asserted: the consumer has no strategy option,
+  ADR-0037).
 - CI pins the `fetch.sh` it downloads by sha256 (`BQ_FETCH_SH_SHA256`) before running it.
 
 ## [1.0.1] - 2026-10-10
