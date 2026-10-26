@@ -1,3 +1,4 @@
+using System.Text;
 using Azure.Messaging.ServiceBus;
 using BabelQueue;
 using BabelQueue.AzureServiceBus;
@@ -292,6 +293,205 @@ public sealed class AsbConsumerTests
 
         Assert.Contains($"'{value}'", reported!.Message);
         Assert.DoesNotContain("...", reported.Message);
+    }
+
+    private static (Mock<ServiceBusSender> Sender, List<ServiceBusMessage> Sent) DlqSender(Exception? failWith = null)
+    {
+        var sent = new List<ServiceBusMessage>();
+        var sender = new Mock<ServiceBusSender>();
+        var setup = sender.Setup(x => x.SendMessageAsync(It.IsAny<ServiceBusMessage>(), It.IsAny<CancellationToken>()));
+        if (failWith is not null)
+        {
+            setup.ThrowsAsync(failWith);
+        }
+        else
+        {
+            setup.Callback<ServiceBusMessage, CancellationToken>((m, _) => sent.Add(m)).Returns(Task.CompletedTask);
+        }
+
+        return (sender, sent);
+    }
+
+    private static ServiceBusReceivedMessage WithBody(byte[] body, object? version = null, int deliveryCount = 1)
+    {
+        var properties = new Dictionary<string, object>();
+        if (version is not null)
+        {
+            properties["bq-schema-version"] = version;
+        }
+
+        return ServiceBusModelFactory.ServiceBusReceivedMessage(
+            body: BinaryData.FromBytes(body), deliveryCount: deliveryCount, properties: properties);
+    }
+
+    private static void VerifyOnly(
+        Mock<ServiceBusReceiver> receiver, int completes = 0, int abandons = 0, int deadLetters = 0)
+    {
+        receiver.Verify(r => r.CompleteMessageAsync(It.IsAny<ServiceBusReceivedMessage>(), It.IsAny<CancellationToken>()), Times.Exactly(completes));
+        receiver.Verify(r => r.AbandonMessageAsync(It.IsAny<ServiceBusReceivedMessage>(), It.IsAny<IDictionary<string, object>>(), It.IsAny<CancellationToken>()), Times.Exactly(abandons));
+        receiver.Verify(r => r.DeadLetterMessageAsync(It.IsAny<ServiceBusReceivedMessage>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()), Times.Exactly(deadLetters));
+    }
+
+    [Fact]
+    public async Task VersionGatedMessageIsWrittenRawToTheDlqThenCompletedOnTheFirstDelivery()
+    {
+        // delivery-count 9, hook set: the gate applies on the first delivery, copies the bytes as received, and the hook is not called.
+        var body = Encoding.UTF8.GetBytes("{\n  \"meta\": {\"schema_version\": 2}, \"job\": \"" + Urn + "\"\n}\n");
+        var receiver = WithDeadLetter(ReceiverWith(WithBody(body, 2, deliveryCount: 9)));
+        var (sender, sent) = DlqSender();
+        var hook = 0;
+        var calls = 0;
+        var options = new AsbConsumerOptions
+        {
+            DeadLetterSender = sender.Object,
+            OnUnknownUrn = (_, _, _) => { hook++; return Task.CompletedTask; },
+        };
+        var handlers = new Dictionary<string, BabelHandler> { [Urn] = (_, _, _) => { calls++; return Task.CompletedTask; } };
+
+        await new AsbConsumer(receiver.Object, handlers, options).PollAsync();
+
+        Assert.Equal(0, calls);
+        Assert.Equal(0, hook);
+        Assert.Equal(body, Assert.Single(sent).Body.ToArray());
+        VerifyOnly(receiver, completes: 1);
+    }
+
+    [Fact]
+    public async Task VersionGatedMessageWhoseDlqWriteFailsIsAbandonedNotCompleted()
+    {
+        var receiver = WithDeadLetter(ReceiverWith(WithBody(Encoding.UTF8.GetBytes(ValidBody()), 2)));
+        var (sender, _) = DlqSender(new InvalidOperationException("dlq down"));
+        var reported = new List<Exception>();
+        var options = new AsbConsumerOptions { DeadLetterSender = sender.Object, OnError = (e, _, _) => reported.Add(e) };
+
+        var count = await new AsbConsumer(receiver.Object, new Dictionary<string, BabelHandler>(), options).PollAsync();
+
+        Assert.Equal(1, count);
+        VerifyOnly(receiver, abandons: 1);
+        Assert.Equal(2, reported.Count);
+        Assert.IsType<InvalidOperationException>(reported[1].InnerException);
+    }
+
+    [Fact]
+    public async Task HookOnlyConsumerDeadLettersAGatedMessageNativelyAndNeverCallsTheHook()
+    {
+        // OnUnknownUrn alone must not turn the gate into a silent drop (Complete) -- it behaves as fail.
+        var receiver = WithDeadLetter(ReceiverWith(WithBody(Encoding.UTF8.GetBytes(ValidBody()), 2)));
+        var hook = 0;
+        var options = new AsbConsumerOptions { OnUnknownUrn = (_, _, _) => { hook++; return Task.CompletedTask; } };
+
+        await new AsbConsumer(receiver.Object, new Dictionary<string, BabelHandler>(), options).PollAsync();
+
+        Assert.Equal(0, hook);
+        VerifyOnly(receiver, deadLetters: 1);
+    }
+
+    [Fact]
+    public async Task PoisonBodyIsWrittenAsAnAdr0035RecordToTheDlqThenCompleted()
+    {
+        var receiver = ReceiverWith(WithBody(Encoding.UTF8.GetBytes("{\"not\":\"an envelope\"}"), deliveryCount: 4));
+        var (sender, sent) = DlqSender();
+        Exception? reported = null;
+        var calls = 0;
+        var options = new AsbConsumerOptions { DeadLetterSender = sender.Object, Queue = "orders", OnError = (e, _, _) => reported = e };
+        var handlers = new Dictionary<string, BabelHandler> { [Urn] = (_, _, _) => { calls++; return Task.CompletedTask; } };
+
+        await new AsbConsumer(receiver.Object, handlers, options).PollAsync();
+
+        Assert.Equal(0, calls);
+        Assert.IsType<BabelQueueException>(reported);
+        using var doc = System.Text.Json.JsonDocument.Parse(Assert.Single(sent).Body.ToArray());
+        Assert.Equal("an envelope", doc.RootElement.GetProperty("not").GetString());
+        var block = doc.RootElement.GetProperty("dead_letter");
+        Assert.Equal("poison", block.GetProperty("reason").GetString());
+        Assert.Equal("orders", block.GetProperty("original_queue").GetString());
+        Assert.Equal(3, block.GetProperty("attempts").GetInt32());
+        VerifyOnly(receiver, completes: 1);
+    }
+
+    [Fact]
+    public async Task HookOnlyConsumerDoesNotDropPoisonSilently()
+    {
+        // The OnUnknownUrn hook is for an unknown URN only: with the DLQ on a poison record is written, with it off the
+        // message is abandoned to the native mechanism -- never Completed (dropped) and the hook is never called.
+        var hook = 0;
+        foreach (var dlqOn in new[] { true, false })
+        {
+            var receiver = ReceiverWith(WithBody(Encoding.UTF8.GetBytes("junk")));
+            var (sender, sent) = DlqSender();
+            var options = new AsbConsumerOptions
+            {
+                DeadLetterSender = dlqOn ? sender.Object : null,
+                OnUnknownUrn = (_, _, _) => { hook++; return Task.CompletedTask; },
+            };
+
+            await new AsbConsumer(receiver.Object, new Dictionary<string, BabelHandler>(), options).PollAsync();
+
+            Assert.Equal(dlqOn ? 1 : 0, sent.Count);
+            if (dlqOn)
+            {
+                VerifyOnly(receiver, completes: 1);
+            }
+            else
+            {
+                VerifyOnly(receiver, abandons: 1);
+            }
+        }
+
+        Assert.Equal(0, hook);
+    }
+
+    [Fact]
+    public async Task InvalidUtf8PoisonIsWrappedAsBase64()
+    {
+        var bytes = new byte[] { 0x7B, 0xFF, 0xFE, 0x7D };
+        var receiver = ReceiverWith(WithBody(bytes));
+        var (sender, sent) = DlqSender();
+        var options = new AsbConsumerOptions { DeadLetterSender = sender.Object };
+
+        await new AsbConsumer(receiver.Object, new Dictionary<string, BabelHandler>(), options).PollAsync();
+
+        using var doc = System.Text.Json.JsonDocument.Parse(Assert.Single(sent).Body.ToArray());
+        Assert.Equal(Convert.ToBase64String(bytes), doc.RootElement.GetProperty("raw").GetString());
+        Assert.Equal("base64", doc.RootElement.GetProperty("raw_encoding").GetString());
+        VerifyOnly(receiver, completes: 1);
+    }
+
+    [Fact]
+    public async Task PoisonOriginalQueueFallsBackToTheSenderPathWithoutItsDlqSuffix()
+    {
+        var receiver = ReceiverWith(WithBody(Encoding.UTF8.GetBytes("junk")));
+        var (sender, sent) = DlqSender();
+        sender.SetupGet(x => x.EntityPath).Returns("invoices.dlq");
+
+        await new AsbConsumer(receiver.Object, new Dictionary<string, BabelHandler>(), new AsbConsumerOptions { DeadLetterSender = sender.Object }).PollAsync();
+
+        using var doc = System.Text.Json.JsonDocument.Parse(Assert.Single(sent).Body.ToArray());
+        Assert.Equal("invoices", doc.RootElement.GetProperty("dead_letter").GetProperty("original_queue").GetString());
+    }
+
+    [Fact]
+    public async Task PoisonWhoseDlqWriteFailsIsAbandonedNotCompleted()
+    {
+        var receiver = ReceiverWith(WithBody(Encoding.UTF8.GetBytes("junk")));
+        var (sender, _) = DlqSender(new InvalidOperationException("dlq down"));
+        var reported = new List<Exception>();
+        var options = new AsbConsumerOptions { DeadLetterSender = sender.Object, OnError = (e, _, _) => reported.Add(e) };
+
+        await new AsbConsumer(receiver.Object, new Dictionary<string, BabelHandler>(), options).PollAsync();
+
+        VerifyOnly(receiver, abandons: 1);
+        Assert.Equal(2, reported.Count);
+    }
+
+    [Fact]
+    public async Task PoisonWithoutADlqIsLeftToTheNativeMechanismByAbandon()
+    {
+        var receiver = ReceiverWith(WithBody(Encoding.UTF8.GetBytes("junk")));
+
+        await new AsbConsumer(receiver.Object, new Dictionary<string, BabelHandler>()).PollAsync();
+
+        VerifyOnly(receiver, abandons: 1);
     }
 
     [Fact]

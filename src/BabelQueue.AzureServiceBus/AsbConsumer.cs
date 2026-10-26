@@ -1,4 +1,7 @@
 using System.Globalization;
+using System.Text;
+using System.Text.Encodings.Web;
+using System.Text.Json;
 using Azure.Messaging.ServiceBus;
 
 namespace BabelQueue.AzureServiceBus;
@@ -14,14 +17,26 @@ namespace BabelQueue.AzureServiceBus;
 /// Per §4.7 the <c>bq-schema-version</c> application property is checked <b>before</b> the body is
 /// decoded: when it is present and is not the schema version the core supports
 /// (<see cref="EnvelopeCodec.SchemaVersion"/>), the body is never decoded or routed; <c>OnError</c> is
-/// notified (with an empty, undecoded envelope) and the message is <b>explicitly dead-lettered</b>
-/// (<c>DeadLetterMessageAsync</c>, reason <c>unsupported schema version</c>) — never abandoned, since
-/// redelivery cannot make an unknown version supported. A string value is compared exactly as sent, as the
+/// notified (with an empty, undecoded envelope) and the message is settled on its <b>first delivery</b> (ADR-0037
+/// decision 1) — never abandoned for a retry, since redelivery cannot make an unknown version supported. With
+/// <see cref="AsbConsumerOptions.DeadLetterSender"/> set the body is written <b>exactly as received</b> (no
+/// <c>dead_letter</c> block) to <c>&lt;queue&gt;.dlq</c> and the message is <c>Complete</c>d after the write (a failed
+/// write <c>Abandon</c>s it: unsettled, reported); without a sender it is handed to the native mechanism by an explicit
+/// <c>DeadLetterMessageAsync</c> (reason <c>unsupported schema version</c>). This consumer has no unknown-URN strategy
+/// option and the <see cref="AsbConsumerOptions.OnUnknownUrn"/> hook never applies to a gated message: it behaves as
+/// <c>fail</c>. A string value is compared exactly as sent, as the
 /// canonical decimal string, with no trimming (so <c>"2"</c>, <c>"x"</c>, <c>"01"</c> and <c>" 1"</c> are unknown);
 /// producers write an AMQP integer, so any integral type (byte/short/int/long, signed or unsigned) equal to
 /// the supported version is accepted too, while every other number or type is rejected. A missing, null or blank
 /// (empty or ASCII-whitespace-only: space, tab, LF, VT, FF, CR) property changes nothing, and a supported
 /// version still goes through the post-decode <see cref="EnvelopeCodec.Accepts"/> check.
+/// </para>
+/// <para>
+/// A poison body (not valid UTF-8, not a JSON object, no valid <c>job</c>/<c>urn</c> identity, or any other non-conformant
+/// envelope) is never handed to a handler and never retried by the SDK (ADR-0037 decision 2). With a
+/// <see cref="AsbConsumerOptions.DeadLetterSender"/> the ADR-0035 record (<c>reason: "poison"</c>) is written to
+/// <c>&lt;queue&gt;.dlq</c> and the message <c>Complete</c>d after the write (a failed write <c>Abandon</c>s it); without a
+/// sender it is <c>Abandon</c>ed, so the broker moves it to the native dead-letter sub-queue at <c>MaxDeliveryCount</c>.
 /// </para>
 /// </summary>
 public sealed class AsbConsumer
@@ -78,29 +93,63 @@ public sealed class AsbConsumer
         // §4.7: version-gate on the application property before decoding the body.
         if (!IsSupportedSchemaVersion(message, out var declaredVersion))
         {
-            // The body is deliberately not decoded, so hand OnError an empty envelope.
+            // ADR-0037 decision 1: settled on the first delivery, never decoded, never retried. The body is deliberately
+            // not decoded, so hand OnError an empty envelope.
             var reason = $"Rejected an Azure Service Bus message: unsupported {SchemaVersionProperty} property "
                 + $"'{TruncateDeclaredVersion(declaredVersion)}' (supported: {EnvelopeCodec.SchemaVersion}); body not decoded.";
-            _options.OnError?.Invoke(
+            var empty = new Envelope(null, null, null, null, 0, null);
+            if (_options.DeadLetterSender is null)
+            {
+                // Dead-lettering off: the native mechanism, explicitly and now (the body stays unchanged).
+                _options.OnError?.Invoke(new BabelQueueException(reason), empty, message);
+                await _receiver
+                    .DeadLetterMessageAsync(message, UnsupportedSchemaVersionReason, reason, cancellationToken)
+                    .ConfigureAwait(false);
+                return;
+            }
+
+            await SettleToDeadLetterAsync(
+                message,
+                () => new ServiceBusMessage(message.Body ?? BinaryData.FromBytes(Array.Empty<byte>())),
+                empty,
                 new BabelQueueException(reason),
-                new Envelope(null, null, null, null, 0, null),
-                message);
-            await _receiver
-                .DeadLetterMessageAsync(message, UnsupportedSchemaVersionReason, reason, cancellationToken)
-                .ConfigureAwait(false);
+                cancellationToken).ConfigureAwait(false);
             return;
         }
 
+        // Invalid UTF-8 is poison (a lenient decode would hand a corrupted payload to a handler).
+        var bodyBytes = message.Body?.ToArray() ?? Array.Empty<byte>();
+        var text = StrictUtf8(bodyBytes);
         var envelope = Reconcile(
-            EnvelopeCodec.Decode(message.Body?.ToString() ?? string.Empty),
+            text is null ? new Envelope(null, null, null, null, 0, null) : EnvelopeCodec.Decode(text),
             message.DeliveryCount);
 
-        if (!EnvelopeCodec.Accepts(envelope))
+        if (text is null || !EnvelopeCodec.Accepts(envelope))
         {
-            _options.OnError?.Invoke(
-                new BabelQueueException("Rejected a non-conformant BabelQueue envelope from Azure Service Bus."),
-                envelope, message);
-            await AbandonAsync(message, cancellationToken).ConfigureAwait(false);
+            // ADR-0037 decision 2: the poison route -- the ADR-0035 record to <queue>.dlq, never a retry by the SDK.
+            var cause = new BabelQueueException(text is null
+                ? "Rejected an Azure Service Bus message: the body is not valid UTF-8."
+                : "Rejected a non-conformant BabelQueue envelope from Azure Service Bus.");
+            if (_options.DeadLetterSender is null)
+            {
+                // Dead-lettering off: native -- Abandon until MaxDeliveryCount moves it to $DeadLetterQueue.
+                _options.OnError?.Invoke(cause, envelope, message);
+                await AbandonAsync(message, cancellationToken).ConfigureAwait(false);
+                return;
+            }
+
+            await SettleToDeadLetterAsync(
+                message,
+                () => new ServiceBusMessage(BinaryData.FromBytes(PoisonBody(
+                    bodyBytes,
+                    cause.Message,
+                    cause.GetType().FullName,
+                    DateTimeOffset.UtcNow.ToUnixTimeMilliseconds(),
+                    QueueName(),
+                    envelope.Attempts))) { ContentType = "application/json" },
+                envelope,
+                cause,
+                cancellationToken).ConfigureAwait(false);
             return;
         }
 
@@ -134,6 +183,113 @@ public sealed class AsbConsumer
             _options.OnError?.Invoke(error, envelope, message);
             await AbandonAsync(message, cancellationToken).ConfigureAwait(false);
         }
+    }
+
+    /// <summary>
+    /// ADR-0037 decisions 1 and 2 with a dead-letter sender: the record from <paramref name="build"/> is written to
+    /// <c>&lt;queue&gt;.dlq</c> and the message <c>Complete</c>d only after the write succeeded. A failed write
+    /// <c>Abandon</c>s it (never completed, never retried by the SDK; the rejection repeats, so the write is tried again) and
+    /// is reported. The rejection is reported after the settle.
+    /// </summary>
+    private async Task SettleToDeadLetterAsync(
+        ServiceBusReceivedMessage message,
+        Func<ServiceBusMessage> build,
+        Envelope envelope,
+        BabelQueueException rejected,
+        CancellationToken cancellationToken)
+    {
+        try
+        {
+            await _options.DeadLetterSender!.SendMessageAsync(build(), cancellationToken).ConfigureAwait(false);
+        }
+#pragma warning disable CA1031 // Whatever the write failure was, the message must stay unsettled for redelivery, not be lost.
+        catch (Exception writeError) when (writeError is not OperationCanceledException)
+#pragma warning restore CA1031
+        {
+            await AbandonAsync(message, cancellationToken).ConfigureAwait(false);
+            _options.OnError?.Invoke(rejected, envelope, message);
+            _options.OnError?.Invoke(
+                new BabelQueueException(
+                    "Dead-letter write failed; the message was abandoned for redelivery, not completed.", writeError),
+                envelope,
+                message);
+            return;
+        }
+
+        await CompleteAsync(message, cancellationToken).ConfigureAwait(false);
+        _options.OnError?.Invoke(rejected, envelope, message);
+    }
+
+    private static readonly UTF8Encoding StrictUtf8Encoding = new(encoderShouldEmitUTF8Identifier: false, throwOnInvalidBytes: true);
+
+    private static string? StrictUtf8(byte[] body)
+    {
+        try
+        {
+            return StrictUtf8Encoding.GetString(body);
+        }
+        catch (DecoderFallbackException)
+        {
+            return null;
+        }
+    }
+
+    /// <summary>
+    /// The consumer's queue name, for the poison record's <c>dead_letter.original_queue</c>: the explicit
+    /// <see cref="AsbConsumerOptions.Queue"/>, else the receiver's entity path, else the dead-letter sender's entity path
+    /// without its <c>.dlq</c> suffix.
+    /// </summary>
+    private string QueueName()
+    {
+        if (!string.IsNullOrWhiteSpace(_options.Queue))
+        {
+            return _options.Queue;
+        }
+
+        var path = _receiver.EntityPath;
+        if (!string.IsNullOrWhiteSpace(path))
+        {
+            return path;
+        }
+
+        var dlq = _options.DeadLetterSender?.EntityPath;
+        if (string.IsNullOrWhiteSpace(dlq))
+        {
+            return "default";
+        }
+
+        return dlq.EndsWith(".dlq", StringComparison.Ordinal) && dlq.Length > ".dlq".Length ? dlq[..^".dlq".Length] : dlq;
+    }
+
+    private static readonly JsonWriterOptions PoisonWriterOptions = new()
+    {
+        Encoder = JavaScriptEncoder.UnsafeRelaxedJsonEscaping,
+        Indented = false,
+    };
+
+    /// <summary>
+    /// The poison DLQ record (ADR-0035, <see cref="PoisonRecord"/>): a body that is a strict JSON object without a
+    /// top-level <c>dead_letter</c> key is spliced byte for byte; anything else is carried as <c>raw</c> (plain text when
+    /// valid UTF-8, otherwise base64 plus <c>raw_encoding: "base64"</c>). The <c>dead_letter</c> block has reason
+    /// <c>poison</c>.
+    /// </summary>
+    internal static byte[] PoisonBody(byte[] body, string? error, string? exception, long failedAt, string originalQueue, int attempts)
+    {
+        using var stream = new MemoryStream();
+        using (var writer = new Utf8JsonWriter(stream, PoisonWriterOptions))
+        {
+            writer.WriteStartObject();
+            writer.WriteString("reason", "poison");
+            if (error is null) { writer.WriteNull("error"); } else { writer.WriteString("error", error); }
+            if (exception is null) { writer.WriteNull("exception"); } else { writer.WriteString("exception", exception); }
+            writer.WriteNumber("failed_at", failedAt);
+            writer.WriteString("original_queue", originalQueue);
+            writer.WriteNumber("attempts", attempts);
+            writer.WriteString("lang", EnvelopeCodec.SourceLang);
+            writer.WriteEndObject();
+        }
+
+        return PoisonRecord.Build(body, Encoding.UTF8.GetString(stream.ToArray()));
     }
 
     /// <summary>The first 64 characters of the rejected value, plus <c>...</c> when it was cut.</summary>
