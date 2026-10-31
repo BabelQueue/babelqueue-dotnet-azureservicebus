@@ -507,4 +507,39 @@ public sealed class AsbConsumerTests
             r => r.ReceiveMessagesAsync(It.IsAny<int>(), It.IsAny<TimeSpan?>(), It.IsAny<CancellationToken>()),
             Times.Never);
     }
+
+    [Fact]
+    public async Task HandlerReceivesThePublishedTraceparentThroughTheConsumer()
+    {
+        const string traceparent = "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01";
+        ServiceBusMessage? published = null;
+        var sender = new Mock<ServiceBusSender>();
+        sender.SetupGet(s => s.EntityPath).Returns("orders");
+        sender.Setup(s => s.SendMessageAsync(It.IsAny<ServiceBusMessage>(), It.IsAny<CancellationToken>()))
+            .Callback<ServiceBusMessage, CancellationToken>((m, _) => published = m)
+            .Returns(Task.CompletedTask);
+        await new AsbPublisher(sender.Object).PublishWithHeadersAsync(
+            Urn, null, new Dictionary<string, string> { ["traceparent"] = traceparent }, "trace-1");
+
+        var received = ServiceBusModelFactory.ServiceBusReceivedMessage(
+            body: published!.Body,
+            subject: published.Subject,
+            deliveryCount: 1,
+            properties: new Dictionary<string, object>(published.ApplicationProperties));
+        IReadOnlyDictionary<string, string>? seen = null;
+        var handlers = new Dictionary<string, BabelHandler>
+        {
+            [Urn] = (_, message, _) =>
+            {
+                seen = AsbTraceHeaders.Extract(message);
+                return Task.CompletedTask;
+            },
+        };
+
+        await new AsbConsumer(ReceiverWith(received).Object, handlers).PollAsync();
+
+        Assert.NotNull(seen);
+        Assert.Equal(traceparent, seen!["traceparent"]);
+        Assert.DoesNotContain("bq-schema-version", seen.Keys);
+    }
 }
