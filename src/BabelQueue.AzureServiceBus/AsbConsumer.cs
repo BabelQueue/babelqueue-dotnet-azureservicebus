@@ -105,6 +105,9 @@ public sealed class AsbConsumer
                 await _receiver
                     .DeadLetterMessageAsync(message, UnsupportedSchemaVersionReason, reason, cancellationToken)
                     .ConfigureAwait(false);
+                // An SDK-initiated native dead-letter the broker just confirmed counts (ADR-0039 section 5.1): no
+                // BabelQueue DLQ (empty DeadLetterQueue) and no dead_letter.reason, so the reason is empty.
+                _options.DeadLetterObserver.NotifySafely(new DeadLetterEvent(QueueName(), string.Empty, string.Empty));
                 return;
             }
 
@@ -113,6 +116,7 @@ public sealed class AsbConsumer
                 () => new ServiceBusMessage(message.Body ?? BinaryData.FromBytes(Array.Empty<byte>())),
                 empty,
                 new BabelQueueException(reason),
+                string.Empty, // a raw body: no dead_letter block, so no reason
                 cancellationToken).ConfigureAwait(false);
             return;
         }
@@ -149,6 +153,7 @@ public sealed class AsbConsumer
                     envelope.Attempts))) { ContentType = "application/json" },
                 envelope,
                 cause,
+                "poison",
                 cancellationToken).ConfigureAwait(false);
             return;
         }
@@ -189,13 +194,16 @@ public sealed class AsbConsumer
     /// ADR-0037 decisions 1 and 2 with a dead-letter sender: the record from <paramref name="build"/> is written to
     /// <c>&lt;queue&gt;.dlq</c> and the message <c>Complete</c>d only after the write succeeded. A failed write
     /// <c>Abandon</c>s it (never completed, never retried by the SDK; the rejection repeats, so the write is tried again) and
-    /// is reported. The rejection is reported after the settle.
+    /// is reported. The rejection is reported after the settle. After a confirmed write the dead-letter observer
+    /// (ADR-0039 section 5.1) is told once with <paramref name="deadLetterReason"/> (empty for a raw gated body); a failed
+    /// write never reaches it.
     /// </summary>
     private async Task SettleToDeadLetterAsync(
         ServiceBusReceivedMessage message,
         Func<ServiceBusMessage> build,
         Envelope envelope,
         BabelQueueException rejected,
+        string deadLetterReason,
         CancellationToken cancellationToken)
     {
         try
@@ -216,6 +224,8 @@ public sealed class AsbConsumer
             return;
         }
 
+        _options.DeadLetterObserver.NotifySafely(
+            new DeadLetterEvent(QueueName(), _options.DeadLetterSender!.EntityPath ?? string.Empty, deadLetterReason));
         await CompleteAsync(message, cancellationToken).ConfigureAwait(false);
         _options.OnError?.Invoke(rejected, envelope, message);
     }

@@ -542,4 +542,205 @@ public sealed class AsbConsumerTests
         Assert.Equal(traceparent, seen!["traceparent"]);
         Assert.DoesNotContain("bq-schema-version", seen.Keys);
     }
+
+    // ---- Dead-letter observer (ADR-0039 section 5.1-5.3) ----
+
+    private sealed class RecordingObserver : IDeadLetterObserver
+    {
+        public List<DeadLetterEvent> Events { get; } = new();
+
+        public void OnDeadLetter(DeadLetterEvent deadLetterEvent) => Events.Add(deadLetterEvent);
+    }
+
+    private sealed class ThrowingObserver : IDeadLetterObserver
+    {
+        public int Calls { get; private set; }
+
+        public void OnDeadLetter(DeadLetterEvent deadLetterEvent)
+        {
+            Calls++;
+            throw new InvalidOperationException("observer exploded");
+        }
+    }
+
+    private static Mock<ServiceBusSender> NamedDlqSender(List<ServiceBusMessage> sent, Exception? failWith = null)
+    {
+        var (sender, _) = DlqSender(failWith);
+        sender.SetupGet(x => x.EntityPath).Returns("orders.dlq");
+        if (failWith is null)
+        {
+            sender
+                .Setup(x => x.SendMessageAsync(It.IsAny<ServiceBusMessage>(), It.IsAny<CancellationToken>()))
+                .Callback<ServiceBusMessage, CancellationToken>((m, _) => sent.Add(m))
+                .Returns(Task.CompletedTask);
+        }
+
+        return sender;
+    }
+
+    [Fact]
+    public async Task ObserverIsCalledOnceForAPoisonBodyWrittenToTheDlq()
+    {
+        var observer = new RecordingObserver();
+        var sent = new List<ServiceBusMessage>();
+        var receiver = ReceiverWith(WithBody(Encoding.UTF8.GetBytes("junk")));
+
+        await new AsbConsumer(receiver.Object, new Dictionary<string, BabelHandler>(), new AsbConsumerOptions
+        {
+            DeadLetterSender = NamedDlqSender(sent).Object,
+            Queue = "orders",
+            DeadLetterObserver = observer,
+        }).PollAsync();
+
+        Assert.Single(sent);
+        Assert.Equal(new DeadLetterEvent("orders", "orders.dlq", "poison"), Assert.Single(observer.Events));
+        VerifyOnly(receiver, completes: 1);
+    }
+
+    [Fact]
+    public async Task ObserverIsCalledOnceForAVersionGatedRawBodyWithAnEmptyReason()
+    {
+        var observer = new RecordingObserver();
+        var sent = new List<ServiceBusMessage>();
+        var receiver = WithDeadLetter(ReceiverWith(WithBody(Encoding.UTF8.GetBytes(ValidBody()), 2)));
+
+        await new AsbConsumer(receiver.Object, new Dictionary<string, BabelHandler>(), new AsbConsumerOptions
+        {
+            DeadLetterSender = NamedDlqSender(sent).Object,
+            Queue = "orders",
+            DeadLetterObserver = observer,
+        }).PollAsync();
+
+        Assert.Single(sent);
+        Assert.Equal(new DeadLetterEvent("orders", "orders.dlq", string.Empty), Assert.Single(observer.Events));
+        VerifyOnly(receiver, completes: 1);
+    }
+
+    [Fact]
+    public async Task ObserverQueueFallsBackToTheSenderPathWithoutItsDlqSuffix()
+    {
+        var observer = new RecordingObserver();
+        var receiver = ReceiverWith(WithBody(Encoding.UTF8.GetBytes("junk")));
+
+        await new AsbConsumer(receiver.Object, new Dictionary<string, BabelHandler>(), new AsbConsumerOptions
+        {
+            DeadLetterSender = NamedDlqSender(new List<ServiceBusMessage>()).Object,
+            DeadLetterObserver = observer,
+        }).PollAsync();
+
+        Assert.Equal("orders", Assert.Single(observer.Events).Queue);
+    }
+
+    [Fact]
+    public async Task ObserverIsCalledOnceForTheNativeDeadLetterOfAGatedMessageWithAnEmptyDeadLetterQueue()
+    {
+        var observer = new RecordingObserver();
+        var receiver = WithDeadLetter(ReceiverWith(WithBody(Encoding.UTF8.GetBytes(ValidBody()), 2)));
+
+        await new AsbConsumer(receiver.Object, new Dictionary<string, BabelHandler>(), new AsbConsumerOptions
+        {
+            Queue = "orders",
+            DeadLetterObserver = observer,
+        }).PollAsync();
+
+        VerifyOnly(receiver, deadLetters: 1);
+        Assert.Equal(new DeadLetterEvent("orders", string.Empty, string.Empty), Assert.Single(observer.Events));
+    }
+
+    [Fact]
+    public async Task ObserverIsNotCalledWhenTheNativeDeadLetterCallFails()
+    {
+        var observer = new RecordingObserver();
+        var receiver = ReceiverWith(WithBody(Encoding.UTF8.GetBytes(ValidBody()), 2));
+        receiver
+            .Setup(r => r.DeadLetterMessageAsync(
+                It.IsAny<ServiceBusReceivedMessage>(), It.IsAny<string>(), It.IsAny<string>(), It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("lock lost"));
+
+        await Assert.ThrowsAsync<InvalidOperationException>(() =>
+            new AsbConsumer(receiver.Object, new Dictionary<string, BabelHandler>(), new AsbConsumerOptions
+            {
+                DeadLetterObserver = observer,
+            }).PollAsync());
+
+        Assert.Empty(observer.Events);
+    }
+
+    [Fact]
+    public async Task ObserverIsNotCalledWhenTheDeadLetterWriteFails()
+    {
+        var observer = new RecordingObserver();
+
+        foreach (var message in new[]
+                 {
+                     WithBody(Encoding.UTF8.GetBytes("junk")),
+                     WithBody(Encoding.UTF8.GetBytes(ValidBody()), 2),
+                 })
+        {
+            var receiver = WithDeadLetter(ReceiverWith(message));
+
+            await new AsbConsumer(receiver.Object, new Dictionary<string, BabelHandler>(), new AsbConsumerOptions
+            {
+                DeadLetterSender = NamedDlqSender(new List<ServiceBusMessage>(), new InvalidOperationException("dlq down")).Object,
+                DeadLetterObserver = observer,
+            }).PollAsync();
+
+            VerifyOnly(receiver, abandons: 1);
+        }
+
+        Assert.Empty(observer.Events);
+    }
+
+    [Fact]
+    public async Task ObserverIsNotCalledForAPoisonBodyWithNoSenderOrForAHandlerFailure()
+    {
+        var observer = new RecordingObserver();
+
+        var poison = ReceiverWith(WithBody(Encoding.UTF8.GetBytes("junk")));
+        await new AsbConsumer(poison.Object, new Dictionary<string, BabelHandler>(), new AsbConsumerOptions
+        {
+            DeadLetterObserver = observer,
+        }).PollAsync();
+        VerifyOnly(poison, abandons: 1);
+
+        // A throwing handler is abandoned; the broker owns the MaxDeliveryCount dead-letter, which is never counted.
+        var failing = ReceiverWith(Received(10));
+        await new AsbConsumer(
+            failing.Object,
+            new Dictionary<string, BabelHandler> { [Urn] = (_, _, _) => throw new InvalidOperationException("boom") },
+            new AsbConsumerOptions { DeadLetterObserver = observer }).PollAsync();
+        VerifyOnly(failing, abandons: 1);
+
+        Assert.Empty(observer.Events);
+    }
+
+    [Fact]
+    public async Task AThrowingObserverDoesNotChangeTheSettleOutcome()
+    {
+        // Written poison record: still completed.
+        var written = new ThrowingObserver();
+        var poison = ReceiverWith(WithBody(Encoding.UTF8.GetBytes("junk")));
+        var sent = new List<ServiceBusMessage>();
+        var count = await new AsbConsumer(poison.Object, new Dictionary<string, BabelHandler>(), new AsbConsumerOptions
+        {
+            DeadLetterSender = NamedDlqSender(sent).Object,
+            DeadLetterObserver = written,
+        }).PollAsync();
+
+        Assert.Equal(1, count);
+        Assert.Equal(1, written.Calls);
+        Assert.Single(sent);
+        VerifyOnly(poison, completes: 1);
+
+        // Native dead-letter: still exactly one native call, nothing completed or abandoned.
+        var native = new ThrowingObserver();
+        var gated = WithDeadLetter(ReceiverWith(WithBody(Encoding.UTF8.GetBytes(ValidBody()), 2)));
+        await new AsbConsumer(gated.Object, new Dictionary<string, BabelHandler>(), new AsbConsumerOptions
+        {
+            DeadLetterObserver = native,
+        }).PollAsync();
+
+        Assert.Equal(1, native.Calls);
+        VerifyOnly(gated, deadLetters: 1);
+    }
 }
