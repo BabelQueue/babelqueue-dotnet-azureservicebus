@@ -35,6 +35,18 @@ public sealed class AsbConsumerOptions
     public ServiceBusSender? DeadLetterSender { get; set; }
 
     /// <summary>
+    /// Optional dead-letter observer (ADR-0039 section 5.1), called once per dead-letter the SDK itself carried out,
+    /// after it is confirmed: a record written through <see cref="DeadLetterSender"/> (a poison body, or a raw
+    /// schema-version-gated body with an empty reason), or, with no sender, the explicit native
+    /// <c>DeadLetterMessageAsync</c> of a schema-version-gated message (empty <c>DeadLetterQueue</c> and reason).
+    /// Not called when the write or the native call fails, when the broker dead-letters on its own
+    /// (<c>MaxDeliveryCount</c>), or for a poison body with no sender (which is only abandoned). An observer exception
+    /// is caught and logged; it never changes the settle outcome. Needs a <c>BabelQueue.Core</c> that ships
+    /// <see cref="IDeadLetterObserver"/>.
+    /// </summary>
+    public IDeadLetterObserver? DeadLetterObserver { get; set; }
+
+    /// <summary>
     /// The consumer's queue name, written as <c>dead_letter.original_queue</c> of a poison record. Default: the
     /// receiver's entity path, else the <see cref="DeadLetterSender"/> entity path without its <c>.dlq</c> suffix.
     /// </summary>
