@@ -80,6 +80,25 @@ the broker redelivers it and increments `DeliveryCount` (at-least-once); at
 stops on a bad message — observe via `OnError` / `OnUnknownUrn`. The envelope is unchanged
 (`schema_version` stays `1`); Azure Service Bus is purely additive.
 
+## Tracing a publish (ADR-0028, ADR-0038)
+
+`PublishEnvelopeAsync(envelope, headers, ...)` sends an **already-built** envelope exactly as given (the same
+§4 projection, header overlay and scheduled delivery as `PublishWithHeadersAsync`, no rebuild). Use it as the `send` callback of
+`BabelQueue.Core`'s `Telemetry.PublishAsync`, so the producer span's `messaging.message.id` is the `meta.id` that
+reaches the wire and the span's `traceparent` rides beside the envelope:
+
+```csharp
+using BabelQueue.Tracing;
+
+var headers = new Dictionary<string, string>();
+await Telemetry.PublishAsync("urn:babel:orders:created", data, headers,
+    env => publisher.PublishEnvelopeAsync(env, headers), "orders", Telemetry.Systems.ServiceBus);
+```
+
+The `queue` argument you give `Telemetry.PublishAsync` becomes `meta.queue`; `PublishEnvelopeAsync` does not change
+the envelope. The envelope is unchanged (`schema_version` stays `1`). Needs no `BabelQueue.Core` newer than the
+one this package already requires.
+
 ## Build & test
 
 ```bash
